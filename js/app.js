@@ -1,5 +1,6 @@
 /* ============================================================
-   A Little Love — App Logic (Encrypted Edition)
+   A Little Love — App Logic v2
+   Hold-to-open envelope · Long-press secret · Scroll reveal
    ============================================================ */
 
 let current = null;
@@ -8,11 +9,9 @@ let decryptedPayload = null;
 let isOpening = false;
 let typing = false;
 let typeToken = 0;
-let sigClicks = 0;
-let sigResetTimer = null;
 let musicOn = false;
+let secretRevealed = false;
 
-// Brute-force throttling
 let failedAttempts = 0;
 let lockUntil = 0;
 
@@ -86,7 +85,7 @@ function openModal(p) {
   document.getElementById('modalErr').innerText = '';
   const input = document.getElementById('codeInput');
   input.value = '';
-  input.type = 'text';           // ← visible, case-sensitive
+  input.type = 'text';
   document.getElementById('codeModal').classList.add('show');
   setTimeout(() => input.focus(), 100);
 }
@@ -96,16 +95,14 @@ function closeModal() {
   pendingPerson = null;
 }
 
-/* ---------------- VERIFY CODE (via DECRYPTION) ---------------- */
+/* ---------------- VERIFY CODE ---------------- */
 async function verifyCode() {
   const input = document.getElementById('codeInput');
   const errBox = document.getElementById('modalErr');
   const btn = document.querySelector('.modal-btn');
 
-  // ⬇️ Trim whitespace — crypto layer also normalizes case
   const val = input.value.trim();
 
-  // Throttle after repeated failures
   const now = Date.now();
   if (now < lockUntil) {
     const s = Math.ceil((lockUntil - now) / 1000);
@@ -118,7 +115,6 @@ async function verifyCode() {
     return;
   }
 
-  // Loading state
   if (btn) {
     btn.disabled = true;
     if (!btn.dataset.label) btn.dataset.label = btn.innerText;
@@ -128,8 +124,6 @@ async function verifyCode() {
 
   try {
     const payload = await LetterCrypto.decrypt(pendingPerson.encrypted, val);
-
-    // ✅ Success
     decryptedPayload = payload;
     failedAttempts = 0;
 
@@ -140,7 +134,6 @@ async function verifyCode() {
 
     selectPerson(person, payload);
   } catch (err) {
-    // ❌ Wrong code (or unsupported browser)
     if (err && err.message === 'Browser tidak mendukung Web Crypto API') {
       errBox.innerText = 'Browser kamu tidak mendukung. Coba Chrome/Safari terbaru.';
     } else {
@@ -175,13 +168,18 @@ document.getElementById('codeModal').addEventListener('click', e => {
 /* ---------------- SELECT PERSON ---------------- */
 function selectPerson(p, payload) {
   current = Object.assign({}, p, payload);
+  secretRevealed = false;
 
-  // No key in URL
   history.replaceState(null, '', '?p=' + p.id);
 
   const letter = document.getElementById('letterContainer');
   letter.style.setProperty('--primary', p.accent);
   letter.style.setProperty('--primary-dark', p.accent);
+
+  // Reset any lingering scroll-reveal / secret state
+  letter.querySelectorAll('.card.in-view').forEach(c => c.classList.remove('in-view'));
+  const sig = document.getElementById('signature');
+  sig && sig.classList.remove('charging', 'revealed');
 
   document.getElementById('sealInitial').innerText = p.name.charAt(0).toUpperCase();
   document.getElementById('previewTitle').innerText = 'For ' + p.name;
@@ -194,13 +192,15 @@ function selectPerson(p, payload) {
   document.getElementById('letterBody').innerHTML = '';
   document.getElementById('secretMsg').classList.remove('show');
   document.getElementById('skipArea').style.display = 'none';
-  sigClicks = 0;
 
   renderPhotos(p.photos || []);
 
   const env = document.getElementById('envelopeBox');
-  env.classList.remove('open', 'fade-out');
+  env.classList.remove('open', 'fade-out', 'holding', 'needs-hold');
   env.style.display = '';
+  const seal = env.querySelector('.seal');
+  if (seal) seal.style.setProperty('--progress', 0);
+
   letter.classList.remove('show');
   isOpening = false;
 
@@ -212,13 +212,99 @@ function selectPerson(p, payload) {
 function goBack() {
   history.replaceState(null, '', location.pathname);
   document.getElementById('envelopeScreen').classList.remove('show');
-  document.getElementById('letterContainer').classList.remove('show');
+  const letter = document.getElementById('letterContainer');
+  letter.classList.remove('show');
+  letter.querySelectorAll('.card.in-view').forEach(c => c.classList.remove('in-view'));
+
+  const sig = document.getElementById('signature');
+  sig && sig.classList.remove('charging', 'revealed');
+
   document.getElementById('hubView').classList.add('show');
   renderHub();
   window.scrollTo(0, 0);
 }
 
-/* ---------------- ENVELOPE OPEN ---------------- */
+/* ============================================================
+   HOLD-TO-OPEN ENVELOPE
+   ============================================================ */
+const HOLD_DURATION = 1200;
+
+function initEnvelopeHold() {
+  const env = document.getElementById('envelopeBox');
+  if (!env || env.dataset.holdInit === '1') return;
+  env.dataset.holdInit = '1';
+
+  const seal = env.querySelector('.seal');
+  if (!seal) return;
+
+  // Remove the legacy click handler so a single tap does nothing
+  env.removeAttribute('onclick');
+
+  let holdStart = 0;
+  let raf = null;
+
+  const resetProgress = () => {
+    if (raf) cancelAnimationFrame(raf);
+    raf = null;
+    holdStart = 0;
+    seal.style.setProperty('--progress', 0);
+    env.classList.remove('holding');
+  };
+
+  const tick = () => {
+    if (!holdStart) return;
+    const p = Math.min(100, ((performance.now() - holdStart) / HOLD_DURATION) * 100);
+    seal.style.setProperty('--progress', p);
+    if (p >= 100) {
+      resetProgress();
+      fireOpen();
+      return;
+    }
+    raf = requestAnimationFrame(tick);
+  };
+
+  const start = (e) => {
+    if (isOpening) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    holdStart = performance.now();
+    env.classList.add('holding');
+    try { env.setPointerCapture(e.pointerId); } catch (_) {}
+    raf = requestAnimationFrame(tick);
+  };
+
+  const end = () => {
+    if (!holdStart) return;
+    const elapsed = performance.now() - holdStart;
+    resetProgress();
+    if (elapsed < 260 && !isOpening) {
+      env.classList.add('needs-hold');
+      setTimeout(() => env.classList.remove('needs-hold'), 700);
+    }
+  };
+
+  env.addEventListener('pointerdown', start);
+  env.addEventListener('pointerup', end);
+  env.addEventListener('pointercancel', end);
+  env.addEventListener('pointerleave', end);
+  env.addEventListener('contextmenu', e => e.preventDefault());
+
+  // Keyboard fallback (Enter / Space) — just opens
+  env.setAttribute('role', 'button');
+  env.setAttribute('tabindex', '0');
+  env.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      fireOpen();
+    }
+  });
+}
+
+function fireOpen() {
+  if (isOpening) return;
+  if (navigator.vibrate) navigator.vibrate([15, 45, 30]);
+  openEnvelopeAnimation();
+}
+
 function openEnvelopeAnimation() {
   if (isOpening) return;
 
@@ -248,6 +334,7 @@ function openEnvelopeAnimation() {
       document.getElementById('envelopeScreen').classList.remove('show');
       letter.classList.add('show');
       if (current) markOpened(current.id);
+      initScrollReveal();   // ← cards reveal one-by-one on scroll
       startTypewriter();
     }, 400);
   }, 1250);
@@ -258,6 +345,34 @@ function markOpened(id) {
     openedAt: new Date().toISOString(),
     opened: true
   }).catch(err => console.error('Error saving opened status:', err));
+}
+
+/* ============================================================
+   SCROLL-REVEAL CARDS
+   ============================================================ */
+function initScrollReveal() {
+  const container = document.getElementById('letterContainer');
+  if (!container) return;
+  const cards = container.querySelectorAll('.card');
+  if (!cards.length) return;
+
+  // Card 1 (the letter itself) reveals immediately
+  cards[0].classList.add('in-view');
+
+  // Everything else reveals as the reader scrolls
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('in-view');
+        io.unobserve(entry.target);
+      }
+    });
+  }, {
+    threshold: 0.12,
+    rootMargin: '0px 0px -80px 0px'
+  });
+
+  for (let i = 1; i < cards.length; i++) io.observe(cards[i]);
 }
 
 /* ============================================================
@@ -414,7 +529,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-/* ---------------- TYPEWRITER ---------------- */
+/* ============================================================
+   TYPEWRITER — slower, more deliberate
+   ============================================================ */
 function startTypewriter() {
   if (!current || !current.letter) return;
 
@@ -460,7 +577,7 @@ function startTypewriter() {
 
       if (ci < text.length) {
         const tc = text[ci];
-        const typo = Math.random() < 0.03 && /[a-zA-Z]/.test(tc);
+        const typo = Math.random() < 0.012 && /[a-zA-Z]/.test(tc);
 
         if (typo) {
           cursor.insertAdjacentText('beforebegin', wrong(tc));
@@ -470,24 +587,28 @@ function startTypewriter() {
             if (n && n.nodeType === Node.TEXT_NODE) {
               n.nodeValue = n.nodeValue.slice(0, -1);
             }
-            setTimeout(tick, Math.floor(Math.random() * 40) + 30);
-          }, Math.floor(Math.random() * 70) + 50);
+            setTimeout(tick, Math.floor(Math.random() * 60) + 40);
+          }, Math.floor(Math.random() * 90) + 60);
           return;
         }
 
         cursor.insertAdjacentText('beforebegin', tc);
         ci++;
 
-        let d = Math.floor(Math.random() * 20) + 15;
-        if (tc === ' ') d += Math.floor(Math.random() * 15) + 5;
-        else if (['.', ',', '!', '?', ';'].includes(tc))
-          d += Math.floor(Math.random() * 100) + 60;
+        let d = Math.floor(Math.random() * 35) + 45;   // 45-80ms base
+        if (tc === ' ') {
+          d += Math.floor(Math.random() * 25) + 15;
+        } else if ([',', ';', ':'].includes(tc)) {
+          d += 120 + Math.random() * 80;
+        } else if (['.', '!', '?'].includes(tc)) {
+          d += 280 + Math.random() * 200;              // long stop at sentence end
+        }
 
         setTimeout(tick, d);
       } else {
         cursor.remove();
         pi++;
-        setTimeout(nextPara, Math.floor(Math.random() * 200) + 200);
+        setTimeout(nextPara, Math.floor(Math.random() * 300) + 300);
       }
     }
     tick();
@@ -508,56 +629,122 @@ function skipTyping() {
   finishTyping();
 }
 
-/* ---------------- SIGNATURE EASTER EGG ---------------- */
-document.addEventListener('DOMContentLoaded', () => {
+/* ============================================================
+   SIGNATURE — long-press secret
+   ============================================================ */
+function initSignatureSecret() {
   const sig = document.getElementById('signature');
-  if (!sig) return;
-  sig.addEventListener('click', () => {
-    if (!current) return;
-    sigClicks++;
-    clearTimeout(sigResetTimer);
-    sigResetTimer = setTimeout(() => { sigClicks = 0; }, 2500);
-    if (sigClicks === 3) {
-      confetti({ particleCount: 10, spread: 30, origin: { y: 0.7 }, scalar: 0.7 });
+  if (!sig || sig.dataset.secretInit === '1') return;
+  sig.dataset.secretInit = '1';
+
+  let pressTimer = null;
+
+  const start = (e) => {
+    if (!current || secretRevealed) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+    sig.classList.add('charging');
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      sig.classList.remove('charging');
+      revealSecret();
+    }, 1500);
+  };
+
+  const end = () => {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
     }
-    if (sigClicks >= 5) {
-      sigClicks = 0;
-      const msg = document.getElementById('secretMsg');
-      msg.innerText = current.secretMsg || '';
-      msg.classList.add('show');
-      triggerConfetti();
+    sig.classList.remove('charging');
+  };
+
+  sig.addEventListener('pointerdown', start);
+  sig.addEventListener('pointerup', end);
+  sig.addEventListener('pointercancel', end);
+  sig.addEventListener('pointerleave', end);
+  sig.addEventListener('contextmenu', e => e.preventDefault());
+
+  sig.setAttribute('role', 'button');
+  sig.setAttribute('tabindex', '0');
+  sig.setAttribute('aria-label', 'Tahan untuk membuka pesan rahasia');
+
+  sig.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      revealSecret();
     }
   });
+}
+
+function revealSecret() {
+  if (!current || secretRevealed) return;
+  secretRevealed = true;
+
+  const sig = document.getElementById('signature');
+  sig.classList.add('revealed');
+
+  const msg = document.getElementById('secretMsg');
+  msg.innerText = current.secretMsg || '';
+  msg.classList.add('show');
+
+  if (navigator.vibrate) navigator.vibrate([12, 30, 12, 30, 20]);
+  triggerConfetti();
+}
+
+/* ============================================================
+   CLICK RIPPLE — bursts on every click/tap
+   ============================================================ */
+document.addEventListener('pointerdown', (e) => {
+  // Don't spam inside the carousel or the modal
+  if (e.target.closest('.polaroid-track')) return;
+  if (e.target.closest('.modal-overlay')) return;
+
+  const emojis = ['💖', '✨', '💫', '🌸'];
+  const count = 4;
+
+  for (let i = 0; i < count; i++) {
+    const t = document.createElement('div');
+    t.className = 'cursor-trail';
+    t.innerText = emojis[Math.floor(Math.random() * emojis.length)];
+    const angle = (Math.PI * 2 * i) / count + Math.random() * 0.6;
+    const dist = 40 + Math.random() * 40;
+    t.style.left = e.clientX + 'px';
+    t.style.top  = e.clientY + 'px';
+    t.style.setProperty('--tx', Math.cos(angle) * dist + 'px');
+    t.style.setProperty('--ty', Math.sin(angle) * dist - 20 + 'px');
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 1000);
+  }
 });
 
-/* ---------------- SPAM LOVE ---------------- */
+/* ---------------- SPAM LOVE (unchanged) ---------------- */
 function spamLove(e) {
   confetti({
-    particleCount: 25, spread: 55,
+    particleCount: 30, spread: 60,
     origin: {
       x: e.clientX / window.innerWidth,
       y: e.clientY / window.innerHeight
     },
-    colors: ['#ff527b', '#ffbe0b', '#ff9ebb', '#ffffff']
+    colors: ['#f5c76e', '#ff7a9c', '#fff7e3', '#ffffff']
   });
-  const hearts = ['💖', '💕', '✨', '🌸', '🥰', '🧁'];
-  for (let i = 0; i < 6; i++) {
+  const hearts = ['💖', '💕', '✨', '🌸', '🥰', '💫'];
+  for (let i = 0; i < 8; i++) {
     const h = document.createElement('div');
     h.classList.add('floating-heart');
     h.innerText = hearts[Math.floor(Math.random() * hearts.length)];
-    h.style.left = (e.clientX + (Math.random() * 80 - 40)) + 'px';
+    h.style.left = (e.clientX + (Math.random() * 100 - 50)) + 'px';
     h.style.top  = (e.clientY + (Math.random() * 20 - 10)) + 'px';
     document.body.appendChild(h);
-    setTimeout(() => h.remove(), 2100);
+    setTimeout(() => h.remove(), 2200);
   }
 }
 
-/* ---------------- COPY PERSONAL LINK ---------------- */
+/* ---------------- COPY LINK (unchanged) ---------------- */
 function copyPersonalLink(e) {
   if (!current) return;
   const url = new URL(location.origin + location.pathname);
   url.searchParams.set('p', current.id);
-  // ⚠️ No code in URL — share separately.
 
   const done = () => {
     const btn = e.currentTarget;
@@ -565,7 +752,7 @@ function copyPersonalLink(e) {
     btn.innerHTML = '<span aria-hidden="true">✓</span> Link tersalin! Kirim kodenya terpisah ya 🔐';
     setTimeout(() => { btn.innerHTML = original; }, 2600);
     confetti({
-      particleCount: 20, spread: 40, scalar: 0.7,
+      particleCount: 24, spread: 45, scalar: 0.7,
       origin: { x: e.clientX / window.innerWidth, y: e.clientY / window.innerHeight }
     });
   };
@@ -579,11 +766,11 @@ function copyPersonalLink(e) {
   }
 }
 
-/* ---------------- CONFETTI ---------------- */
+/* ---------------- CONFETTI (unchanged) ---------------- */
 function triggerConfetti() {
-  const count = 200;
+  const count = 220;
   const base = { origin: { y: 0.6 } };
-  const colors = ['#ff527b', '#ffbe0b', '#ff9ebb', '#ffffff'];
+  const colors = ['#f5c76e', '#ff7a9c', '#fff7e3', '#ffffff'];
   function fire(r, o) {
     confetti(Object.assign({}, base, o, {
       particleCount: Math.floor(count * r),
@@ -597,22 +784,7 @@ function triggerConfetti() {
   fire(0.10, { spread: 120, startVelocity: 45 });
 }
 
-/* ---------------- CURSOR TRAIL ---------------- */
-let lastTrail = 0;
-document.addEventListener('mousemove', e => {
-  const now = Date.now();
-  if (now - lastTrail < 110) return;
-  lastTrail = now;
-  const t = document.createElement('div');
-  t.className = 'cursor-trail';
-  t.innerText = ['💖', '💕', '✨', '🌸'][Math.floor(Math.random() * 4)];
-  t.style.left = e.clientX + 'px';
-  t.style.top  = e.clientY + 'px';
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), 950);
-});
-
-/* ---------------- GREETING -> MAIN ---------------- */
+/* ---------------- GREETING → MAIN ---------------- */
 async function enterMainPage() {
   const greeting = document.getElementById('greetingScreen');
   const main = document.getElementById('mainContent');
@@ -628,7 +800,6 @@ async function enterMainPage() {
   }
 
   audioToggle.classList.add('visible');
-
   greeting.classList.add('hidden');
 
   setTimeout(async () => {
@@ -678,6 +849,12 @@ document.addEventListener('DOMContentLoaded', () => {
 document.addEventListener('DOMContentLoaded', () => {
   const btn = document.getElementById('greetingOpen');
   if (btn) btn.addEventListener('click', enterMainPage);
+});
+
+/* ---------------- INIT INTERACTIONS ---------------- */
+document.addEventListener('DOMContentLoaded', () => {
+  initEnvelopeHold();
+  initSignatureSecret();
 });
 
 /* ---------------- INIT: personal link (?p=...) ---------------- */
