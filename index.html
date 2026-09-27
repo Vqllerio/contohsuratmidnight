@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#fdf5f1" />
+  <title>A Little Love — For You</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Grandstander:wght@600;800&family=Nunito:wght@400;600;700&family=Caveat:wght@600&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="css/styles.css" />
+
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+
+  <base target="_blank" />
+</head>
+<body>
+
+  <!-- ===== Ambient background decor ===== -->
+  <div class="bg-decor" style="top: 10%; left: 5%;">🌸</div>
+  <div class="bg-decor" style="top: 22%; right: 8%;">✨</div>
+  <div class="bg-decor" style="bottom: 16%; left: 8%;">🎀</div>
+  <div class="bg-decor" style="bottom: 12%; right: 6%;">💖</div>
+
+  <audio id="bgMusic" loop>
+    <source src="Asset/Sound/Hard_To_Say_Goodbye.mp3" type="audio/mpeg" />
+  </audio>
+  <audio id="letterHoverSound" preload="auto">
+    <source src="Asset/Sound/Letter_Hover.MP3" type="audio/mpeg" />
+  </audio>
+
+  <!-- ===== Persistent audio toggle ===== -->
+  <button class="audio-toggle" id="audioToggle" aria-label="Toggle musik" aria-pressed="false">
+    <span class="audio-icon" id="audioIcon">♪</span>
+  </button>
+
+  <!-- ================= GREETING ================= -->
+  <div id="greetingScreen">
+    <div class="greeting-content">
+      <div class="greeting-eyebrow">— a little something —</div>
+      <div class="greeting-seal" aria-hidden="true">💌</div>
+
+      <h1 id="greetingTitle">For You</h1>
+
+      <div class="greeting-note">
+        <p>
+          Haii!<br />
+          Ini hanya sedikit sesuatu yang mau saya kasih ke kamu.
+          <br /><br />
+          <strong>Setiap surat menyimpan ceritanya sendiri.</strong>
+        </p>
+      </div>
+
+      <p class="greeting-subtitle">
+        Buka pelan-pelan yaa. Ada surat yang sudah menunggu di dalam. ✨
+      </p>
+
+      <button class="greeting-open" id="greetingOpen">
+        Buka Surat <span aria-hidden="true">→</span>
+      </button>
+
+      <p class="greeting-hint">dibuat dengan ♡</p>
+    </div>
+  </div>
+
+  <!-- ================= MAIN ================= -->
+  <div id="mainContent">
+    <div class="container">
+
+      <!-- ===== HUB ===== -->
+      <div id="hubView">
+        <div class="hub-header">
+          <div class="hub-eyebrow">— the collection —</div>
+          <h1>Surat untuk Kamu</h1>
+          <p>Cari namamu, klik amplopnya, dan masukkan kode rahasiamu.</p>
+        </div>
+
+        <div class="hub-grid" id="hubGrid"></div>
+      </div>
+
+      <!-- ===== ENVELOPE SCREEN ===== -->
+      <div id="envelopeScreen">
+        <button class="back-btn" onclick="goBack()">← Kembali ke semua surat</button>
+
+        <div class="envelope-box" id="envelopeBox" onclick="openEnvelopeAnimation()" role="button" tabindex="0" aria-label="Buka amplop">
+          <div class="envelope-shadow" aria-hidden="true"></div>
+          <div class="flap"></div>
+          <div class="pocket"></div>
+          <div class="pocket-fold" aria-hidden="true"></div>
+          <div class="seal" id="sealInitial">💌</div>
+          <div class="letter-preview">
+            <div class="letter-preview-rule"></div>
+            <h3 id="previewTitle">For You</h3>
+            <p>Ada surat spesial untukmu di dalam...</p>
+            <div class="letter-preview-rule"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== LETTER ===== -->
+      <div class="letter-container" id="letterContainer">
+
+        <!-- 1. THE LETTER -->
+        <div class="card">
+          <div class="letter-header">
+            <div class="letter-eyebrow">— a letter for you —</div>
+            <h1 id="letterTitle">Untuk Kamu</h1>
+          </div>
+
+          <div class="letter-body" id="letterBody"></div>
+
+          <div class="skip-area" id="skipArea" style="display:none;">
+            <button class="skip-btn" onclick="skipTyping()">lihat langsung aja ✨</button>
+          </div>
+
+          <div class="letter-footer">
+            <p class="signoff">Peluk hangat dari,</p>
+            <div class="signature" id="signature" title="...?">Valle</div>
+            <div class="secret-msg" id="secretMsg"></div>
+          </div>
+        </div>
+
+        <!-- 2. AWARD -->
+        <div class="card award-card" id="awardCard">
+          <div class="award-label">✦ Official Award ✦</div>
+          <div class="award-icon" id="awardIcon">🏆</div>
+          <div class="award-title" id="awardTitle">Award Title</div>
+          <div class="award-desc" id="awardDesc">Award description</div>
+        </div>
+
+        <!-- 3. BADGES -->
+        <div class="card">
+          <div class="gallery-title">🏆 Your Superpower Badges</div>
+          <div class="badges-grid">
+            <div class="badge-item"><div class="badge-icon">💪🏻</div><div class="badge-title">Kuwatt</div></div>
+            <div class="badge-item"><div class="badge-icon">🧠</div><div class="badge-title">Smarts</div></div>
+            <div class="badge-item"><div class="badge-icon">🫩</div><div class="badge-title">Begadang</div></div>
+            <div class="badge-item"><div class="badge-icon">🥰</div><div class="badge-title">Supportive</div></div>
+          </div>
+        </div>
+
+        <!-- 4. PHOTOS -->
+        <div class="card">
+          <div class="gallery-title">📸 Cute Memories</div>
+
+          <div class="carousel-wrap">
+            <button class="carousel-arrow prev" id="photoPrev" type="button" aria-label="Foto sebelumnya">‹</button>
+
+            <div class="polaroid-track" id="polaroidTrack" role="region" aria-label="Galeri foto" tabindex="0"></div>
+
+            <button class="carousel-arrow next" id="photoNext" type="button" aria-label="Foto berikutnya">›</button>
+          </div>
+
+          <div class="carousel-dots" id="photoDots"></div>
+
+          <div class="carousel-hint">geser untuk lihat foto lainnya ✨</div>
+        </div>
+
+        <!-- 5. ACTIONS -->
+        <div class="interactive-btn-area">
+          <button class="love-btn" onclick="spamLove(event)">
+            <span aria-hidden="true">💖</span> Spam Love &amp; Semangat!
+          </button>
+          <button class="love-btn ghost" onclick="copyPersonalLink(event)">
+            <span aria-hidden="true">🔗</span> Copy link surat ini
+          </button>
+        </div>
+
+        <div class="letter-end-note">
+          <span>♡</span> kamu bisa balik ke sini kapan aja <span>♡</span>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Back to top ===== -->
+  <button class="back-to-top" id="backToTop" aria-label="Kembali ke atas">↑</button>
+
+  <!-- ================= CODE MODAL ================= -->
+  <div class="modal-overlay" id="codeModal" role="dialog" aria-modal="true">
+    <div class="modal" role="document">
+      <div class="modal-eyebrow">— locked pressing —</div>
+      <h2 id="modalName">Halo! 🔒</h2>
+      <p class="sub">Surat ini khusus untuk mata yang tepat.<br />Masukkan kode rahasiamu:</p>
+
+      <!-- ⬇️ THE FIX — no autocorrect/autocapitalize/spellcheck -->
+      <input
+        type="text"
+        id="codeInput"
+        placeholder="kode rahasia"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="off"
+        spellcheck="false"
+        inputmode="text"
+        aria-label="Kode rahasia"
+      />
+
+      <div class="err" id="modalErr"></div>
+      <button class="modal-btn" onclick="verifyCode()">Buka Surat</button>
+      <span class="close-link" onclick="closeModal()">bukan aku, kembali</span>
+    </div>
+  </div>
+
+  <!-- Load scripts in order -->
+  <script src="js/firebase-config.js"></script>
+  <script src="js/crypto.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+
+</body>
+</html>

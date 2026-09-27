@@ -1,0 +1,10 @@
+{
+  "name": "alittlelove-tools",
+  "version": "1.0.0",
+  "description": "Local-only encryption tool for A Little Love letters",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "node encrypt.js"
+  }
+}
